@@ -15,8 +15,25 @@
     },
 
     "transcription": {
-        "model": "small",
-        "language": "auto"
+        "provider": "local",
+        "language": "auto",
+        
+        "local": {
+            "model": "small"
+        },
+        
+        "openai": {
+            "model": "whisper-1"
+        },
+        
+        "openrouter": {
+            "model": "openai/whisper-large-v3"
+        },
+        
+        "multimodal": {
+            "provider": "openrouter",
+            "model": "openai/gpt-4o-audio-preview"
+        }
     },
 
     "calendar": {
