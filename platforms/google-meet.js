@@ -123,6 +123,52 @@ class GoogleMeetPlatform extends BasePlatform {
         return false;
     }
 
+    /**
+     * Get participant count from Google Meet
+     * Returns -1 if unable to determine, 0 if alone
+     */
+    async getParticipantCount() {
+        try {
+            // Method 1: Check for "alone" indicators
+            const aloneIndicators = [
+                "You are the only one here",
+                "Waiting for others to join",
+                "No one else is here",
+            ];
+            
+            const isAlone = await this._pageContainsAny(aloneIndicators);
+            if (isAlone) {
+                return 0;
+            }
+            
+            // Method 2: Count video tiles/participant elements
+            const participantSelectors = [
+                "[data-participant-id]",
+                "[data-requested-participant-id]",
+                "[data-self-name]",
+            ];
+            
+            let maxCount = 0;
+            for (const selector of participantSelectors) {
+                try {
+                    const elements = await this.page.$$(selector);
+                    maxCount = Math.max(maxCount, elements.length);
+                } catch (e) {}
+            }
+            
+            if (maxCount > 0) {
+                // Subtract 1 for the bot itself
+                return Math.max(0, maxCount - 1);
+            }
+            
+            return -1; // Unable to determine
+        } catch (e) {
+            this.log("Error getting participant count: " + e.message);
+            return -1;
+        }
+    }
+
+
     async checkMeetingEnded(hasJoinedBefore) {
         // If we never joined, don't false-positive on the join page
         if (!hasJoinedBefore) {

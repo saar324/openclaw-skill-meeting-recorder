@@ -106,6 +106,14 @@ class BasePlatform {
      * @param {boolean} hasJoinedBefore - whether we ever successfully joined
      * @returns {boolean}
      */
+    /**
+     * Get the number of participants in the meeting (excluding the bot)
+     * Returns -1 if unable to determine
+     */
+    async getParticipantCount() {
+        return -1; // Default: unknown
+    }
+
     async checkMeetingEnded(hasJoinedBefore) {
         throw new Error("Adapter must implement checkMeetingEnded()");
     }

@@ -23,6 +23,8 @@ class MeetingBot {
         this.platform = null;
         this.meetingCode = null;
         this.meetingUrl = null;
+        this.leftDueToEmptyTimeout = false;
+        this.emptyMeetingSince = null;
     }
 
     formatDuration(ms) {
@@ -254,15 +256,55 @@ class MeetingBot {
     async monitorMeeting() {
         this.log("Monitoring meeting...");
         await new Promise(r => setTimeout(r, 10000));
-
+        
+        const emptyTimeoutMinutes = config.meeting?.emptyTimeoutMinutes || 15;
+        const emptyTimeoutMs = emptyTimeoutMinutes * 60 * 1000;
+        
         while (this.isInMeeting) {
             await new Promise(r => setTimeout(r, 5000));
 
+            // Check if meeting ended normally
             if (await this.adapter.checkMeetingEnded(this.hasJoinedMeeting)) {
                 this.isInMeeting = false;
                 this.log("Meeting ended, starting cleanup...");
                 await this.cleanup();
                 break;
+            }
+            
+            // Check for empty meeting timeout
+            try {
+                const participantCount = await this.adapter.getParticipantCount();
+                
+                if (participantCount === 0) {
+                    // Meeting is empty (only bot)
+                    if (!this.emptyMeetingSince) {
+                        this.emptyMeetingSince = Date.now();
+                        this.log("Meeting appears empty, starting timeout timer...");
+                    } else {
+                        const emptyDuration = Date.now() - this.emptyMeetingSince;
+                        const remainingMin = Math.ceil((emptyTimeoutMs - emptyDuration) / 60000);
+                        
+                        if (emptyDuration >= emptyTimeoutMs) {
+                            this.log(`Meeting empty for ${emptyTimeoutMinutes} minutes, leaving...`);
+                            this.isInMeeting = false;
+                            this.leftDueToEmptyTimeout = true;
+                            await this.cleanup();
+                            break;
+                        } else if (emptyDuration > 60000 && emptyDuration % 60000 < 5000) {
+                            // Log every minute
+                            this.log(`Meeting still empty, ${remainingMin} min until auto-leave`);
+                        }
+                    }
+                } else if (participantCount > 0) {
+                    // Someone is in the meeting, reset timer
+                    if (this.emptyMeetingSince) {
+                        this.log(`Participant detected (${participantCount} others), canceling empty timeout`);
+                        this.emptyMeetingSince = null;
+                    }
+                }
+                // participantCount === -1 means unknown, do nothing
+            } catch (e) {
+                // Ignore errors in participant count check
             }
         }
     }
@@ -275,7 +317,24 @@ class MeetingBot {
         await this.stopRecording();
 
         const endedAt = new Date().toISOString();
-        const transcript = await this.transcribe();
+        
+        // Skip transcription if we left due to empty meeting timeout
+        let transcript = null;
+        const skipTranscription = this.leftDueToEmptyTimeout && 
+            (config.meeting?.skipTranscriptionOnEmptyLeave !== false);
+        
+        if (skipTranscription) {
+            this.log("Skipping transcription (left due to empty meeting timeout)");
+            // Delete the recording file to save space
+            if (this.recordingPath && fs.existsSync(this.recordingPath)) {
+                try {
+                    fs.unlinkSync(this.recordingPath);
+                    this.log("Deleted unused recording file");
+                } catch (e) {}
+            }
+        } else {
+            transcript = await this.transcribe();
+        }
 
         // Close the meeting tab (free memory), but keep at least one tab open for Chrome
         try {

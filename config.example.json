@@ -2,6 +2,10 @@
     "botName": "Meeting Bot",
     "language": "en",
 
+    "meeting": {
+        "emptyTimeoutMinutes": 15,
+        "skipTranscriptionOnEmptyLeave": true
+    },
     "chrome": {
         "debuggingPort": 9222,
         "display": ":98",

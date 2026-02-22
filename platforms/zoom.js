@@ -602,6 +602,44 @@ class ZoomPlatform extends BasePlatform {
         return "timeout";
     }
 
+    /**
+     * Get participant count from Zoom
+     * Returns -1 if unable to determine, 0 if alone
+     */
+    async getParticipantCount() {
+        try {
+            // Try to find participant count from footer or panel
+            const countElement = await this.page.$(".footer-button-base__number-counter, [class*=participants-count], .participants-section-container__participants-footer-count");
+            if (countElement) {
+                const text = await countElement.evaluate(el => el.textContent);
+                const match = text.match(/\d+/);
+                if (match) {
+                    const count = parseInt(match[0], 10);
+                    // Subtract 1 for the bot
+                    return Math.max(0, count - 1);
+                }
+            }
+            
+            // Check for "waiting for host" or alone indicators
+            const aloneIndicators = [
+                "Waiting for the host",
+                "waiting for host",
+                "You are the only participant",
+            ];
+            
+            const isAlone = await this._pageContainsAny(aloneIndicators);
+            if (isAlone) {
+                return 0;
+            }
+            
+            return -1;
+        } catch (e) {
+            this.log("Error getting participant count: " + e.message);
+            return -1;
+        }
+    }
+
+
     async checkMeetingEnded(hasJoinedBefore) {
         // Check for explicit end indicators
         const endIndicators = [
