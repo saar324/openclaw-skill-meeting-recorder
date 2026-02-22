@@ -1,7 +1,10 @@
 {
     "botName": "Meeting Bot",
+    "googleAccount": {
+        "enabled": false,
+        "profileDir": "~/.config/meeting-bot-chrome"
+    },
     "language": "en",
-
     "meeting": {
         "emptyTimeoutMinutes": 15,
         "skipTranscriptionOnEmptyLeave": true
@@ -11,50 +14,43 @@
         "display": ":98",
         "userDataDir": "/tmp/chrome-meeting"
     },
-
     "recording": {
         "outputDir": "~/meeting-transcripts",
         "sampleRate": 16000,
         "channels": 1
     },
-
     "transcription": {
         "provider": "local",
         "language": "auto",
-        
         "local": {
             "model": "small"
         },
-        
         "openai": {
             "model": "whisper-1"
         },
-        
         "openrouter": {
             "model": "openai/whisper-large-v3"
         },
-        
         "multimodal": {
             "provider": "openrouter",
             "model": "openai/gpt-4o-audio-preview"
         }
     },
-
     "calendar": {
         "enabled": false,
         "joinBeforeMinutes": 2,
         "scheduleHours": "7-18",
         "scheduleDays": "0-4"
     },
-
     "whatsapp": {
         "enabled": false,
-        "allowList": ["*"],
+        "allowList": [
+            "*"
+        ],
         "blockList": [],
         "autoAnswerDelaySec": 3,
         "maxCallDurationMin": 120
     },
-
     "metadata": {
         "enabled": true,
         "provider": "openrouter",

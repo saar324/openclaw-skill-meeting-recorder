@@ -199,7 +199,14 @@ class MeetingBot {
 
         // Adapter handles all platform-specific steps
         await this.adapter.dismissPopups();
-        await this.adapter.enterName(BOT_NAME);
+        
+        // Skip name entry if using Google account (name comes from account)
+        if (config.googleAccount?.enabled) {
+            this.log("Using Google account profile (skipping manual name entry)");
+        } else {
+            await this.adapter.enterName(BOT_NAME);
+        }
+        
         await this.adapter.muteMedia();
 
         await new Promise(r => setTimeout(r, 1000));
