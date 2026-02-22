@@ -1,0 +1,87 @@
+#!/bin/bash
+# Stop the WhatsApp Call Watcher daemon
+#
+# Sends SIGTERM for graceful shutdown:
+#   - If in a call: ends call, processes recording, then exits
+#   - If idle: exits immediately
+#
+# Usage:
+#   stop-whatsapp-watcher              # Graceful stop
+#   stop-whatsapp-watcher --force      # Force kill (SIGKILL)
+
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PID_FILE="/tmp/whatsapp-watcher.pid"
+LOG_FILE="/tmp/whatsapp-watcher.log"
+
+# ── Force kill ──
+if [ "$1" = "--force" ]; then
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE")
+        echo "Force killing watcher (PID: $PID)..."
+        kill -9 "$PID" 2>/dev/null
+        rm -f "$PID_FILE"
+        echo "Done"
+    else
+        # Try to find by process name
+        PIDS=$(pgrep -f "whatsapp-watcher.js")
+        if [ -n "$PIDS" ]; then
+            echo "Force killing orphaned watcher processes: $PIDS"
+            echo "$PIDS" | xargs kill -9 2>/dev/null
+            rm -f "$PID_FILE"
+        else
+            echo "No watcher process found"
+        fi
+    fi
+    exit 0
+fi
+
+# ── Graceful stop ──
+if [ -f "$PID_FILE" ]; then
+    PID=$(cat "$PID_FILE")
+
+    if ps -p "$PID" > /dev/null 2>&1; then
+        echo "Stopping WhatsApp Watcher (PID: $PID)..."
+        kill "$PID"
+
+        # Wait for graceful shutdown (up to 60s for call processing)
+        echo "Waiting for graceful shutdown..."
+        for i in $(seq 1 60); do
+            if ! ps -p "$PID" > /dev/null 2>&1; then
+                echo "✅ Watcher stopped gracefully"
+                rm -f "$PID_FILE"
+
+                # Show final log lines
+                if [ -f "$LOG_FILE" ]; then
+                    echo ""
+                    echo "--- Final log ---"
+                    tail -10 "$LOG_FILE"
+                fi
+                exit 0
+            fi
+            sleep 1
+        done
+
+        echo "Warning: Watcher taking too long, force killing..."
+        kill -9 "$PID" 2>/dev/null
+        rm -f "$PID_FILE"
+        echo "Force killed"
+    else
+        echo "Watcher process not running (stale PID file)"
+        rm -f "$PID_FILE"
+    fi
+else
+    echo "No active WhatsApp Watcher found"
+
+    # Check for orphaned process
+    ORPHAN=$(pgrep -f "whatsapp-watcher.js")
+    if [ -n "$ORPHAN" ]; then
+        echo "Found orphaned watcher process: $ORPHAN"
+        echo "Killing..."
+        kill "$ORPHAN"
+        sleep 2
+        if ps -p "$ORPHAN" > /dev/null 2>&1; then
+            kill -9 "$ORPHAN" 2>/dev/null
+        fi
+        echo "Done"
+    fi
+fi

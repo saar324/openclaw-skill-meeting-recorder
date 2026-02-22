@@ -1,0 +1,23 @@
+{
+    "allowList": ["*"],
+    "blockList": [],
+    "autoAnswer": true,
+    "autoAnswerDelaySec": 3,
+    "maxCallDurationMin": 120,
+    "recording": {
+        "enabled": true,
+        "transcribe": true,
+        "generateMetadata": true
+    },
+    "watcher": {
+        "pollIntervalMs": 2000,
+        "reconnectIntervalMs": 30000,
+        "logFile": "/tmp/whatsapp-watcher.log",
+        "pidFile": "/tmp/whatsapp-watcher.pid"
+    },
+    "notifications": {
+        "onCallAnswered": true,
+        "onCallEnded": true,
+        "onTranscriptionReady": true
+    }
+}

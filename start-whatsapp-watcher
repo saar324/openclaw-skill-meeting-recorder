@@ -1,0 +1,117 @@
+#!/bin/bash
+# Start the WhatsApp Call Watcher daemon
+#
+# This starts a persistent background process that watches for
+# incoming WhatsApp calls, auto-answers from the allow list,
+# records audio, and transcribes.
+#
+# Prerequisites:
+#   1. Chrome running with --remote-debugging-port=9222
+#   2. WhatsApp Web authenticated (QR code scanned)
+#
+# Usage:
+#   start-whatsapp-watcher              # Start the daemon
+#   start-whatsapp-watcher --setup      # One-time: open WhatsApp Web for QR auth
+#   start-whatsapp-watcher --status     # Check if watcher is running
+
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PID_FILE="/tmp/whatsapp-watcher.pid"
+LOG_FILE="/tmp/whatsapp-watcher.log"
+
+# Load environment from .env if exists
+if [ -f "$SKILL_DIR/.env" ]; then
+    set -a
+    source "$SKILL_DIR/.env"
+    set +a
+fi
+
+export DISPLAY="${DISPLAY:-:98}"
+
+# ── Handle flags ──
+if [ "$1" = "--setup" ]; then
+    echo "=== WhatsApp Web Setup ==="
+    echo "Opening WhatsApp Web for QR code authentication..."
+    echo ""
+
+    # Ensure Chrome is running
+    if ! pgrep -f "remote-debugging-port=9222" > /dev/null; then
+        echo "Starting Chrome..."
+        bash "$SKILL_DIR/scripts/setup/start-chrome.sh" &
+        sleep 5
+    fi
+
+    cd "$SKILL_DIR"
+    node whatsapp-watcher.js --setup
+    exit $?
+fi
+
+if [ "$1" = "--status" ]; then
+    cd "$SKILL_DIR"
+    node whatsapp-watcher.js --status
+    exit $?
+fi
+
+# ── Pre-flight checks ──
+
+# Check if already running
+if [ -f "$PID_FILE" ]; then
+    EXISTING_PID=$(cat "$PID_FILE")
+    if ps -p "$EXISTING_PID" > /dev/null 2>&1; then
+        echo "WhatsApp Watcher already running (PID: $EXISTING_PID)"
+        echo "Log: $LOG_FILE"
+        echo ""
+        echo "To stop: $SKILL_DIR/stop-whatsapp-watcher"
+        exit 1
+    else
+        echo "Removing stale PID file..."
+        rm -f "$PID_FILE"
+    fi
+fi
+
+# Ensure Chrome is running
+if ! pgrep -f "remote-debugging-port=9222" > /dev/null; then
+    echo "Starting Chrome..."
+    bash "$SKILL_DIR/scripts/setup/start-chrome.sh" &
+    sleep 5
+fi
+
+# ── Start the watcher ──
+echo "Starting WhatsApp Call Watcher..."
+echo ""
+
+cd "$SKILL_DIR"
+nohup node whatsapp-watcher.js > "$LOG_FILE" 2>&1 &
+WATCHER_PID=$!
+
+sleep 5
+
+# Verify it started
+if ps -p $WATCHER_PID > /dev/null; then
+    echo "✅ WhatsApp Call Watcher started"
+    echo "   PID: $WATCHER_PID"
+    echo "   Log: $LOG_FILE"
+    echo ""
+    echo "The watcher will:"
+    echo "  - Listen for incoming WhatsApp calls"
+    echo "  - Auto-answer calls from the allow list"
+    echo "  - Record and transcribe call audio"
+    echo "  - Save transcripts to ~/meeting-transcripts/"
+    echo ""
+    echo "Config: $SKILL_DIR/whatsapp-config.json"
+    echo "To stop: $SKILL_DIR/stop-whatsapp-watcher"
+    echo ""
+
+    # Show recent log
+    echo "--- Recent log ---"
+    tail -10 "$LOG_FILE" 2>/dev/null
+else
+    echo "❌ Failed to start watcher"
+    echo ""
+    echo "Log output:"
+    cat "$LOG_FILE" 2>/dev/null
+    echo ""
+    echo "Common issues:"
+    echo "  - Chrome not running (run: start-whatsapp-watcher --setup)"
+    echo "  - WhatsApp Web not authenticated (run: start-whatsapp-watcher --setup)"
+    exit 1
+fi

@@ -1,0 +1,49 @@
+#!/bin/bash
+# Manually leave the current meeting and cleanup
+# This sends SIGTERM to the bot, triggering graceful cleanup
+
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ -f /tmp/meeting-bot.pid ]; then
+    BOT_PID=$(cat /tmp/meeting-bot.pid)
+    
+    if ps -p $BOT_PID > /dev/null 2>&1; then
+        echo "Stopping meeting bot (PID: $BOT_PID)..."
+        kill $BOT_PID
+        
+        # Wait for cleanup
+        echo "Waiting for cleanup (recording stop + transcription)..."
+        for i in {1..120}; do
+            if ! ps -p $BOT_PID > /dev/null 2>&1; then
+                echo "✅ Bot stopped and cleanup complete"
+                rm -f /tmp/meeting-bot.pid
+                
+                # Show transcript location
+                if [ -f /tmp/meeting-bot.log ]; then
+                    echo ""
+                    echo "Recent log:"
+                    tail -10 /tmp/meeting-bot.log
+                fi
+                exit 0
+            fi
+            sleep 1
+        done
+        
+        echo "Warning: Bot taking too long, force killing..."
+        kill -9 $BOT_PID 2>/dev/null
+        rm -f /tmp/meeting-bot.pid
+    else
+        echo "Bot process not running"
+        rm -f /tmp/meeting-bot.pid
+    fi
+else
+    echo "No active meeting session found"
+    
+    # Check if there is an orphaned process
+    ORPHAN=$(pgrep -f "meeting-bot.js")
+    if [ -n "$ORPHAN" ]; then
+        echo "Found orphaned bot process: $ORPHAN"
+        echo "Killing..."
+        kill $ORPHAN
+    fi
+fi

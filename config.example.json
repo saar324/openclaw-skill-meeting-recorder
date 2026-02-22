@@ -1,0 +1,42 @@
+{
+    "botName": "Meeting Bot",
+    "language": "en",
+
+    "chrome": {
+        "debuggingPort": 9222,
+        "display": ":98",
+        "userDataDir": "/tmp/chrome-meeting"
+    },
+
+    "recording": {
+        "outputDir": "~/meeting-transcripts",
+        "sampleRate": 16000,
+        "channels": 1
+    },
+
+    "transcription": {
+        "model": "small",
+        "language": "auto"
+    },
+
+    "calendar": {
+        "enabled": false,
+        "joinBeforeMinutes": 2,
+        "scheduleHours": "7-18",
+        "scheduleDays": "0-4"
+    },
+
+    "whatsapp": {
+        "enabled": false,
+        "allowList": ["*"],
+        "blockList": [],
+        "autoAnswerDelaySec": 3,
+        "maxCallDurationMin": 120
+    },
+
+    "metadata": {
+        "enabled": true,
+        "provider": "openrouter",
+        "model": "anthropic/claude-3-haiku"
+    }
+}

@@ -1,0 +1,119 @@
+#!/bin/bash
+# Join a meeting and record/transcribe automatically
+# Supports: Google Meet, Zoom (auto-detected from URL)
+#
+# Usage: join-meeting <meeting-url> [meeting-name]
+#
+# The bot will:
+# 1. Detect platform from URL (Google Meet / Zoom)
+# 2. Join the meeting
+# 3. Record audio
+# 4. When meeting ends: stop recording, transcribe, cleanup
+#
+# Examples:
+#   join-meeting https://meet.google.com/abc-defg-hij standup
+#   join-meeting https://zoom.us/j/123456789?pwd=abc123 weekly-sync
+
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MEETING_URL="$1"
+MEETING_NAME="${2:-meeting}"
+
+# Load environment from .env if exists
+if [ -f "$SKILL_DIR/.env" ]; then
+    set -a
+    source "$SKILL_DIR/.env"
+    set +a
+fi
+
+if [ -z "$MEETING_URL" ]; then
+    echo "Error: No meeting URL provided"
+    echo ""
+    echo "Usage: join-meeting <meeting-url> [meeting-name]"
+    echo ""
+    echo "Supported platforms:"
+    echo "  Google Meet: https://meet.google.com/xxx-yyyy-zzz"
+    echo "  Zoom:        https://zoom.us/j/123456789?pwd=..."
+    exit 1
+fi
+
+# Detect platform for display
+PLATFORM="unknown"
+if [[ "$MEETING_URL" == *"meet.google.com"* ]]; then
+    PLATFORM="Google Meet"
+elif [[ "$MEETING_URL" == *"zoom.us"* ]]; then
+    PLATFORM="Zoom"
+fi
+
+# Ensure Chrome is running with remote debugging
+if ! pgrep -f "remote-debugging-port=9222" > /dev/null; then
+    echo "Starting Chrome..."
+    export DISPLAY=${DISPLAY:-:98}
+    # Try to find Chrome in common locations
+    CHROME_BIN=""
+    for path in /root/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome \
+                /usr/bin/google-chrome \
+                /usr/bin/chromium-browser \
+                /snap/chromium/current/usr/lib/chromium-browser/chrome; do
+        if [ -x "$path" ] 2>/dev/null; then
+            CHROME_BIN="$path"
+            break
+        fi
+    done
+    
+    if [ -z "$CHROME_BIN" ]; then
+        echo "Error: Chrome not found"
+        exit 1
+    fi
+    
+    "$CHROME_BIN" \
+        --no-sandbox \
+        --disable-gpu \
+        --remote-debugging-port=9222 \
+        --user-data-dir=/root/.config/chromium \
+        --use-fake-ui-for-media-stream \
+        --autoplay-policy=no-user-gesture-required \
+        "about:blank" &
+    sleep 5
+fi
+
+# Check if already in a meeting
+if pgrep -f "meeting-bot.js" > /dev/null; then
+    echo "Error: Already in a meeting. Use leave-meeting first."
+    exit 1
+fi
+
+echo "Platform: $PLATFORM"
+echo "Joining meeting: $MEETING_URL"
+echo "Meeting name: $MEETING_NAME"
+
+# Run the meeting bot in background
+cd "$SKILL_DIR"
+nohup node meeting-bot.js "$MEETING_URL" "$MEETING_NAME" > /tmp/meeting-bot.log 2>&1 &
+BOT_PID=$!
+
+echo $BOT_PID > /tmp/meeting-bot.pid
+
+sleep 8
+
+# Check if bot started successfully
+if ps -p $BOT_PID > /dev/null; then
+    echo ""
+    echo "✅ Bot joining $PLATFORM meeting..."
+    echo "   PID: $BOT_PID"
+    echo "   Log: /tmp/meeting-bot.log"
+    echo ""
+    echo "The bot will automatically:"
+    echo "  - Record the meeting audio"
+    echo "  - Detect when the meeting ends"
+    echo "  - Transcribe the recording"
+    echo "  - Clean up resources"
+    echo ""
+    echo "To manually end: kill $BOT_PID"
+
+    # Show recent log
+    tail -5 /tmp/meeting-bot.log 2>/dev/null
+else
+    echo "❌ Failed to start bot"
+    cat /tmp/meeting-bot.log 2>/dev/null
+    exit 1
+fi
