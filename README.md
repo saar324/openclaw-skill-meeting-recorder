@@ -9,8 +9,8 @@ A headless meeting bot that automatically joins Google Meet, Zoom, and WhatsApp 
 - **Multi-platform support**: Google Meet, Zoom, WhatsApp
 - **Automatic calendar joining**: Integrates with Google Calendar to auto-join scheduled meetings
 - **WhatsApp call watcher**: Persistent daemon that auto-answers incoming calls based on allow/block lists
-- **Audio recording**: Captures meeting/call audio via PulseAudio virtual sink
-- **AI transcription**: Uses faster-whisper for efficient, accurate transcription
+- **Audio recording**: Captures meeting/call audio via WebRTC interception (outputs audio.webm)
+- **AI transcription**: Multi-provider support (local faster-whisper, OpenAI Whisper API, OpenRouter)
 - **AI metadata generation**: Generates summaries, action items, and key points (optional)
 - **Headless operation**: Runs on servers without a display using Xvfb
 
@@ -123,15 +123,20 @@ Set up cron to run the scheduler automatically:
     "language": "en",
     "chrome": {
         "debuggingPort": 9222,
-        "display": ":98"
+        "display": ":98",
+        "userDataDir": "/tmp/chrome-meeting"
     },
     "recording": {
         "outputDir": "~/meeting-transcripts",
-        "sampleRate": 16000
+        "sampleRate": 16000,
+        "channels": 1
     },
     "transcription": {
-        "model": "small",
-        "language": "auto"
+        "provider": "local",
+        "language": "auto",
+        "local": { "model": "small" },
+        "openai": { "model": "whisper-1" },
+        "openrouter": { "model": "openai/whisper-large-v3" }
     },
     "calendar": {
         "enabled": false,
@@ -140,7 +145,8 @@ Set up cron to run the scheduler automatically:
     "whatsapp": {
         "allowList": ["*"],
         "blockList": [],
-        "autoAnswerDelaySec": 3
+        "autoAnswerDelaySec": 3,
+        "maxCallDurationMin": 120
     }
 }
 ```
@@ -178,7 +184,7 @@ Edit `whatsapp-config.json`:
 Recordings are saved to:
 ```
 ~/meeting-transcripts/YYYY/MM/YYYY-MM-DD_HHMMSS_meeting-name/
-├── audio.wav       # Original recording
+├── audio.webm      # Original recording (WebRTC/Opus)
 ├── audio.txt       # Plain text transcript
 ├── audio.srt       # Subtitles (SubRip format)
 ├── audio.vtt       # Subtitles (WebVTT format)
@@ -213,8 +219,7 @@ meeting-recorder/
 
 - **Node.js** 18+
 - **Python** 3.8+ with faster-whisper
-- **PulseAudio** for audio routing
-- **FFmpeg** for recording
+- **FFmpeg** for audio conversion (optional, for format conversion)
 - **Xvfb** for headless browser
 - **Chrome/Chromium** with remote debugging
 
@@ -245,11 +250,11 @@ bash scripts/setup/start-chrome.sh
 
 ### No audio in recordings
 ```bash
-# Verify virtual sink exists
-pactl list short sinks | grep meeting_recorder
+# Audio is captured via WebRTC interception (no PulseAudio needed)
+# Check the meeting bot log for capture status:
+tail -20 /tmp/meeting-bot.log | grep AudioCapture
 
-# Create if missing
-bash scripts/setup/create-virtual-sink.sh
+# If no streams are captured, ensure the meeting has other participants with audio
 ```
 
 ### WhatsApp shows QR code

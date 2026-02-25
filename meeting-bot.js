@@ -68,74 +68,238 @@ class MeetingBot {
         this.log("Connected to Chrome");
     }
 
-    // ── Audio ───────────────────────────────────────────────
+    // ── Audio (WebRTC + Tab Capture) ────────────────────────
 
     async setupAudio() {
-        this.log("Setting up audio capture...");
-        try {
-            await this.execAsync("bash " + SKILL_DIR + "/scripts/setup/create-virtual-sink.sh");
-        } catch (e) {
-            // Sink might already exist
-        }
+        this.log("Setting up audio capture via WebRTC interception...");
+        this.cdpSession = await this.page.createCDPSession();
+        this._audioChunksBuffer = [];
+        
+        // Inject WebRTC audio capture BEFORE navigating to the meeting page
+        // This hooks into RTCPeerConnection to capture incoming audio streams
+        await this.page.evaluateOnNewDocument(() => {
+            window.__capturedStreams = [];
+            window.__audioChunks = [];
+            window.__audioCaptureReady = false;
+
+            // Hook RTCPeerConnection to capture remote audio tracks
+            const OrigRTC = window.RTCPeerConnection;
+            window.RTCPeerConnection = function(...args) {
+                const pc = new OrigRTC(...args);
+                
+                pc.addEventListener("track", (event) => {
+                    if (event.track.kind === "audio") {
+                        console.log("[AudioCapture] Captured remote audio track");
+                        window.__capturedStreams.push(event.streams[0] || new MediaStream([event.track]));
+                        window.__tryStartRecording();
+                    }
+                });
+                
+                return pc;
+            };
+            window.RTCPeerConnection.prototype = OrigRTC.prototype;
+            // Copy static properties
+            Object.getOwnPropertyNames(OrigRTC).forEach(prop => {
+                if (prop !== 'prototype' && prop !== 'length' && prop !== 'name') {
+                    try { window.RTCPeerConnection[prop] = OrigRTC[prop]; } catch(e) {}
+                }
+            });
+
+            window.__tryStartRecording = function() {
+                if (window.__audioCaptureReady) return;
+                if (window.__capturedStreams.length === 0) return;
+
+                try {
+                    const audioCtx = new AudioContext({ sampleRate: 16000 });
+                    const dest = audioCtx.createMediaStreamDestination();
+
+                    // Connect all captured streams
+                    for (const stream of window.__capturedStreams) {
+                        try {
+                            const source = audioCtx.createMediaStreamSource(stream);
+                            source.connect(dest);
+                            console.log("[AudioCapture] Connected stream to recorder");
+                        } catch (e) {
+                            console.log("[AudioCapture] Stream connect error:", e.message);
+                        }
+                    }
+
+                    const recorder = new MediaRecorder(dest.stream, {
+                        mimeType: "audio/webm;codecs=opus",
+                        audioBitsPerSecond: 64000
+                    });
+
+                    recorder.ondataavailable = (e) => {
+                        if (e.data.size > 0) {
+                            const reader = new FileReader();
+                            reader.onloadend = () => {
+                                const base64 = reader.result.split(",")[1];
+                                if (base64) window.__audioChunks.push(base64);
+                            };
+                            reader.readAsDataURL(e.data);
+                        }
+                    };
+
+                    recorder.start(3000); // 3 second chunks
+                    window.__audioRecorder = recorder;
+                    window.__audioContext = audioCtx;
+                    window.__audioCaptureReady = true;
+                    console.log("[AudioCapture] MediaRecorder started");
+                } catch (e) {
+                    console.error("[AudioCapture] Recorder start failed:", e);
+                }
+            };
+
+            // Also watch for new streams added later
+            const origAddTrack = MediaStream.prototype.addTrack;
+            MediaStream.prototype.addTrack = function(track) {
+                if (track.kind === "audio" && !window.__capturedStreams.includes(this)) {
+                    console.log("[AudioCapture] New audio track added to stream");
+                    window.__capturedStreams.push(new MediaStream([track]));
+                    if (window.__audioCaptureReady && window.__audioContext) {
+                        try {
+                            const source = window.__audioContext.createMediaStreamSource(new MediaStream([track]));
+                            source.connect(window.__audioContext.createMediaStreamDestination());
+                        } catch(e) {}
+                    }
+                }
+                return origAddTrack.apply(this, arguments);
+            };
+        });
     }
 
     async startRecording(meetingName) {
         this.meetingName = meetingName;
         this.log("Starting recording for: " + meetingName);
 
+        // Create output directory
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, "0");
+        const day = String(now.getDate()).padStart(2, "0");
+        const hours = String(now.getHours()).padStart(2, "0");
+        const mins = String(now.getMinutes()).padStart(2, "0");
+        const secs = String(now.getSeconds()).padStart(2, "0");
+        const safeName = (meetingName || "meeting").replace(/\s+/g, "-").replace(/[^a-zA-Z0-9_-]/g, "");
+        const outputDir = (process.env.HOME || "/root") + "/meeting-transcripts/" + year + "/" + month + "/" + year + "-" + month + "-" + day + "_" + hours + mins + secs + "_" + safeName;
+
         try {
-            const output = await this.execAsync("bash " + SKILL_DIR + "/scripts/recording/start-recording.sh \"" + meetingName + "\"");
-            console.log(output);
-            const match = output.match(/Output: (.+\.wav)/);
-            if (match) {
-                this.recordingPath = match[1];
-                this.log("Recording to: " + this.recordingPath);
-            }
+            await this.execAsync("mkdir -p " + JSON.stringify(outputDir));
         } catch (e) {
-            this.log("Recording error: " + e.message);
+            this.log("Failed to create output dir: " + e.message);
         }
+
+        this.recordingPath = outputDir + "/audio.webm";
+        this.recordingDir = outputDir;
+        this.log("Recording to: " + this.recordingPath);
+
+        // Save metadata
+        try {
+            fs.writeFileSync(outputDir + "/metadata.json", JSON.stringify({
+                meeting_name: meetingName,
+                started_at: now.toISOString(),
+                audio_file: "audio.webm",
+                capture_method: "webrtc_intercept"
+            }, null, 2));
+        } catch (e) {}
     }
 
     async routeAudio() {
-        this.log("Routing browser audio to recorder...");
+        this.log("Waiting for WebRTC audio streams...");
 
-        try {
-            await this.execAsync("pactl set-default-sink meeting_recorder");
-        } catch (e) {}
-
+        // Wait for capture to start (streams arrive after joining)
         for (let i = 0; i < 30; i++) {
             await new Promise(r => setTimeout(r, 1000));
-
             try {
-                const result = await this.execAsync("pactl list short sink-inputs 2>/dev/null | awk '{print \}'");
-                const streamIds = result.trim().split('\n').filter(Boolean);
-
-                if (streamIds.length > 0) {
-                    for (const streamId of streamIds) {
-                        try {
-                            await this.execAsync("pactl move-sink-input " + streamId + " meeting_recorder");
-                        } catch (e) {}
-                    }
-                    this.log("Audio routed (" + streamIds.length + " stream(s))");
+                const ready = await this.page.evaluate(() => window.__audioCaptureReady);
+                if (ready) {
+                    const streamCount = await this.page.evaluate(() => window.__capturedStreams.length);
+                    this.log("Audio capture active (" + streamCount + " stream(s))");
+                    // Start periodic flush of audio chunks to disk
+                    this._audioSaveInterval = setInterval(() => this._flushAudioChunks(), 10000);
                     return true;
                 }
             } catch (e) {}
         }
-        this.log("Warning: Could not find audio streams to route");
+
+        this.log("Warning: No WebRTC audio streams captured after 30s");
+        // Start flush interval anyway in case streams arrive later
+        this._audioSaveInterval = setInterval(() => this._flushAudioChunks(), 10000);
         return false;
+    }
+
+    async _flushAudioChunks() {
+        try {
+            const chunks = await this.page.evaluate(() => {
+                const c = window.__audioChunks || [];
+                window.__audioChunks = [];
+                return c;
+            });
+            if (chunks.length > 0 && this.recordingPath) {
+                for (const base64 of chunks) {
+                    const buf = Buffer.from(base64, "base64");
+                    fs.appendFileSync(this.recordingPath, buf);
+                }
+            }
+        } catch (e) {
+            // Page might be navigated away, save what we have
+        }
     }
 
     async stopRecording() {
         this.log("Stopping recording...");
+
+        if (this._audioSaveInterval) {
+            clearInterval(this._audioSaveInterval);
+        }
+
+        // Stop in-page recorder and get final chunks
         try {
-            const output = await this.execAsync("bash " + SKILL_DIR + "/scripts/recording/stop-recording.sh");
-            console.log(output);
+            const finalChunks = await this.page.evaluate(() => {
+                return new Promise((resolve) => {
+                    if (!window.__audioRecorder || window.__audioRecorder.state === "inactive") {
+                        resolve(window.__audioChunks || []);
+                        return;
+                    }
+                    window.__audioRecorder.onstop = () => {
+                        resolve(window.__audioChunks || []);
+                    };
+                    window.__audioRecorder.stop();
+                });
+            });
+
+            if (finalChunks.length > 0 && this.recordingPath) {
+                for (const base64 of finalChunks) {
+                    const buf = Buffer.from(base64, "base64");
+                    fs.appendFileSync(this.recordingPath, buf);
+                }
+            }
+            this.log("Audio capture stopped");
         } catch (e) {
-            this.log("Stop recording error: " + e.message);
+            this.log("Stop capture error (page may have closed): " + e.message);
+        }
+
+        // Check webm recording file
+        if (this.recordingPath && this.recordingPath.endsWith(".webm")) {
+            try {
+                if (fs.existsSync(this.recordingPath)) {
+                    const stat = fs.statSync(this.recordingPath);
+                    if (stat.size > 0) {
+                        this.log("Recording saved: " + (stat.size / 1024).toFixed(0) + "KB webm");
+                    } else {
+                        this.log("Warning: webm recording is empty (0 bytes)");
+                        this.recordingPath = null;
+                    }
+                } else {
+                    this.log("Warning: Recording file not found");
+                    this.recordingPath = null;
+                }
+            } catch (e) {
+                this.log("Recording check error: " + e.message);
+            }
         }
     }
 
-    // ── Transcription ───────────────────────────────────────
 
     async transcribe() {
         if (!this.recordingPath) {
@@ -149,7 +313,7 @@ class MeetingBot {
             console.log(output);
             this.log("Transcription complete");
 
-            const txtPath = this.recordingPath.replace(".wav", ".txt");
+            const txtPath = this.recordingPath.replace(/\.(wav|webm)$/, ".txt");
             if (fs.existsSync(txtPath)) {
                 return fs.readFileSync(txtPath, "utf8");
             }

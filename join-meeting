@@ -69,7 +69,7 @@ if ! pgrep -f "remote-debugging-port=9222" > /dev/null; then
         --no-sandbox \
         --disable-gpu \
         --remote-debugging-port=9222 \
-        --user-data-dir=/root/.config/chromium \
+        --user-data-dir=/tmp/chrome-meeting \
         --use-fake-ui-for-media-stream \
         --autoplay-policy=no-user-gesture-required \
         "about:blank" &

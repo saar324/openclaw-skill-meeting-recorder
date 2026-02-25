@@ -72,8 +72,13 @@ def transcribe_openai(audio_path, config):
     
     print(f"Transcribing with OpenAI {model}...")
     
+    # Detect mime type from extension
+    ext = audio_path.suffix.lower()
+    mime_types = {".wav": "audio/wav", ".webm": "audio/webm", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".ogg": "audio/ogg"}
+    mime = mime_types.get(ext, "audio/wav")
+    
     with open(audio_path, "rb") as f:
-        files = {"file": (audio_path.name, f, "audio/wav")}
+        files = {"file": (audio_path.name, f, mime)}
         data = {"model": model}
         if language:
             data["language"] = language

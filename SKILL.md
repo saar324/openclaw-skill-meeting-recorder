@@ -10,13 +10,13 @@ metadata:
         - DISPLAY
       bins:
         - node
-        - ffmpeg
-        - pactl
-        - pulseaudio
         - python3
+      optionalBins:
+        - ffmpeg
       optionalEnv:
         - GOG_ACCOUNT
         - GOG_KEYRING_PASSWORD
+        - OPENAI_API_KEY
         - OPENROUTER_API_KEY
         - ANTHROPIC_API_KEY
     primaryEnv: DISPLAY
@@ -40,7 +40,7 @@ An OpenClaw skill for recording and transcribing meetings & calls automatically.
 - **Multi-platform**: Google Meet, Zoom, WhatsApp voice/video calls
 - **Autonomous calendar joining**: Auto-joins meetings from Google Calendar
 - **WhatsApp call watcher**: Persistent daemon with allow/block lists
-- **AI transcription**: Uses faster-whisper (Whisper AI)
+- **AI transcription**: Multi-provider (local faster-whisper, OpenAI Whisper API, OpenRouter)
 - **Headless operation**: Runs on servers without display via Xvfb
 
 ## Quick Start
@@ -113,7 +113,7 @@ OPENROUTER_API_KEY=sk-or-...
 Recordings saved to `~/meeting-transcripts/YYYY/MM/`:
 ```
 YYYY-MM-DD_HHMMSS_meeting-name/
-├── audio.wav      # Recording
+├── audio.webm     # Recording (WebRTC/Opus)
 ├── audio.txt      # Transcript
 ├── audio.srt      # Subtitles
 ├── session.json   # Metadata + AI summary
@@ -125,8 +125,7 @@ YYYY-MM-DD_HHMMSS_meeting-name/
 |------------|---------|
 | Node.js 18+ | Runtime |
 | Python 3.8+ | Transcription (faster-whisper) |
-| PulseAudio | Audio routing |
-| FFmpeg | Recording |
+| FFmpeg | Audio conversion (optional) |
 | Xvfb | Headless display |
 | Chrome/Chromium | Browser automation |
 
